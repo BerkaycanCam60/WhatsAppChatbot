@@ -1,5 +1,10 @@
 const { analyzeMessage } = require("./aiService");
 const { findProductCombination } = require("./productService");
+const {
+    getConversation,
+    updateConversation,
+    pauseBot
+} = require("./conversationService");
 
 function detectQuantityFallback(message) {
     const text = message.toLowerCase();
@@ -13,15 +18,37 @@ function detectQuantityFallback(message) {
     return null;
 }
 
-async function generateReply(message) {
+async function generateReply(customerId, message) {
+    const conversation = getConversation(customerId);
+
+        if (conversation.botPaused) {
+        return {
+            intent: "HUMAN_SUPPORT",
+            quantity: null,
+            reply: null,
+            botPaused: true,
+            conversation
+        };
+    }
+
     const analysis = await analyzeMessage(message);
 
     const intent = analysis.intent;
     let quantity = analysis.quantity;
 
-    // AI miktarı çıkaramazsa local fallback devreye girer
+    // AI quantity bulamazsa local fallback çalışır
     if (quantity === null || quantity === undefined) {
         quantity = detectQuantityFallback(message);
+    }
+    
+
+    // Geçmiş quantity sadece gerekli intentlerde kullanılır
+    if (
+        !quantity &&
+        conversation.selectedQuantity &&
+        ["PRICE_INQUIRY", "STOCK_INQUIRY", "ORDER"].includes(intent)
+    ) {
+        quantity = conversation.selectedQuantity;
     }
 
     let reply;
@@ -43,6 +70,12 @@ async function generateReply(message) {
                     `Şu anda ${quantity} kg için uygun bir ürün seçeneğimiz bulunmuyor.`;
                 break;
             }
+
+            // Ürün gerçekten uygunsa conversation state'e kaydet
+            updateConversation(customerId, {
+                lastIntent: intent,
+                selectedQuantity: quantity
+            });
 
             if (result.type === "EXACT") {
                 const item = result.items[0];
@@ -79,6 +112,12 @@ async function generateReply(message) {
                 break;
             }
 
+            // Stok sorgusunda da quantity hafızaya kaydedilir
+            updateConversation(customerId, {
+                lastIntent: intent,
+                selectedQuantity: quantity
+            });
+
             if (result.type === "EXACT") {
                 reply =
                     `Evet, ${quantity} kg ürünümüz mevcut.`;
@@ -94,30 +133,71 @@ async function generateReply(message) {
             break;
         }
 
-        case "SHIPPING_INQUIRY":
+        case "SHIPPING_INQUIRY": {
             reply =
-                "kapıda ödeme ile kargo ücretsiz eft ile ücretlidir.";
-            break;
+                "Kapıda ödeme ile kargo ücretsizdir, EFT ile ödemede kargo ücretlidir.";
 
-        case "GREETING":
+            break;
+        }
+
+        case "GREETING": {
             reply =
                 "Merhaba 👋 Size nasıl yardımcı olabilirim?";
-            break;
 
-        case "ORDER":
+            break;
+        }
+
+        case "ORDER": {
+
+            if (!quantity) {
+                reply =
+                    "Tabii, sipariş oluşturmanıza yardımcı olabilirim. Kaç kilogram ürün istiyorsunuz?";
+                break;
+            }
+
+            const result = findProductCombination(quantity);
+
+            if (!result) {
+                reply =
+                    `${quantity} kg için uygun ürün seçeneğimiz bulunmuyor.`;
+                break;
+            }
+
+            updateConversation(customerId, {
+                lastIntent: intent,
+                selectedQuantity: quantity
+            });
+
             reply =
-                "Tabii, sipariş oluşturmanıza yardımcı olabilirim. Kaç kilogram ürün istiyorsunuz?";
-            break;
+                `${quantity} kg sipariş vermek istediğinizi anladım. ` +
+                `Sipariş işlemlerine devam edebiliriz.`;
 
-        default:
+            break;
+        }
+        case "HUMAN_SUPPORT": {
+    
+    pauseBot(customerId);
+
+    reply =
+        "Tabii, talebinizi yetkiliye iletiyorum. En kısa sürede sizinle ilgilenecektir.";
+            
+    break;
+}
+
+        default: {
             reply =
                 "Sorunuzu tam anlayamadım. Ürün, fiyat, stok, kargo veya sipariş hakkında yardımcı olabilirim.";
+
+            break;
+        }
     }
 
     return {
-        intent,
-        quantity,
-        reply
+    intent,
+    quantity,
+    reply,
+    botPaused: getConversation(customerId).botPaused,
+    conversation: getConversation(customerId)
     };
 }
 

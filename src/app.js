@@ -3,6 +3,7 @@ const express = require("express");
 const cors = require("cors");
 
 const chatRoutes = require("./routes/chatRoutes");
+const webhookRoutes = require("./routes/webhookRoutes"); // YENİ
 
 const app = express();
 
@@ -19,6 +20,7 @@ app.get("/", (req, res) => {
 
 // Chatbot endpoint
 app.use("/api/chat", chatRoutes);
+app.use("/webhook", webhookRoutes); // YENİ
 
 app.listen(PORT, () => {
     console.log(`Server http://localhost:${PORT} adresinde çalışıyor.`);
